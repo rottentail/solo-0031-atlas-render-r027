@@ -86,20 +86,54 @@ func Validate(d model.Document) error {
 			if l.Fill.Kind != "solid" && l.Fill.Kind != "linear" {
 				return model.Invalid("unknown paint kind")
 			}
-			if _, e := paint.Parse(l.Fill.Color); e != nil {
-				return model.Invalid("invalid fill color")
-			}
 			if l.Fill.Kind == "linear" {
-				if _, e := paint.Parse(l.Fill.EndColor); e != nil {
-					return model.Invalid("invalid gradient color")
-				}
 				for _, n := range []float64{l.Fill.From.X, l.Fill.From.Y, l.Fill.To.X, l.Fill.To.Y} {
 					if !finite(n) {
-						return model.Invalid("invalid gradient endpoint")
+						return model.Invalid("layer %s: invalid gradient endpoint", l.ID)
 					}
 				}
 				if l.Fill.From == l.Fill.To {
-					return model.Invalid("gradient endpoints coincide")
+					return model.Invalid("layer %s: gradient endpoints coincide", l.ID)
+				}
+				if len(l.Fill.Stops) == 0 {
+					// Legacy two-stop form: both endpoint colors are required.
+					if _, e := paint.Parse(l.Fill.Color); e != nil {
+						return model.Invalid("layer %s: invalid fill color: %v", l.ID, e)
+					}
+					if _, e := paint.Parse(l.Fill.EndColor); e != nil {
+						return model.Invalid("layer %s: invalid gradient color: %v", l.ID, e)
+					}
+				} else {
+					if l.Fill.Color != "" || l.Fill.EndColor != "" {
+						return model.Invalid("layer %s: gradient stops replace color and endColor", l.ID)
+					}
+					if len(l.Fill.Stops) < 2 || len(l.Fill.Stops) > paint.MaxStops {
+						return model.Invalid("layer %s: gradient requires 2..%d stops", l.ID, paint.MaxStops)
+					}
+					for i, st := range l.Fill.Stops {
+						if !finite(st.Position) || st.Position < 0 || st.Position > 1 {
+							return model.Invalid("layer %s: stop %d position must be 0..1", l.ID, i)
+						}
+						if !finite(st.Alpha) || st.Alpha < 0 || st.Alpha > 1 {
+							return model.Invalid("layer %s: stop %d alpha must be 0..1", l.ID, i)
+						}
+						if _, e := paint.Parse(st.Color); e != nil {
+							return model.Invalid("layer %s: stop %d color: %v", l.ID, i, e)
+						}
+					}
+				}
+				if l.Fill.Interpolation != "" && l.Fill.Interpolation != "rgb" && l.Fill.Interpolation != "linear-rgb" {
+					return model.Invalid("layer %s: interpolation must be rgb or linear-rgb", l.ID)
+				}
+				if l.Fill.Interpolation != "" && len(l.Fill.Stops) == 0 {
+					return model.Invalid("layer %s: interpolation requires explicit stops", l.ID)
+				}
+			} else {
+				if _, e := paint.Parse(l.Fill.Color); e != nil {
+					return model.Invalid("layer %s: invalid fill color: %v", l.ID, e)
+				}
+				if len(l.Fill.Stops) > 0 || l.Fill.Interpolation != "" {
+					return model.Invalid("layer %s: only linear paint carries stops", l.ID)
 				}
 			}
 		}

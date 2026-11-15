@@ -1,0 +1,38 @@
+{
+  "name": "多停靠柔和淡出",
+  "expectedRevision": 0,
+  "document": {
+    "width": 320,
+    "height": 240,
+    "background": "#0E1116",
+    "layers": [
+      {
+        "id": "panel",
+        "kind": "rectangle",
+        "width": 260,
+        "height": 160,
+        "transform": {
+          "x": 30,
+          "y": 40,
+          "scaleX": 1,
+          "scaleY": 1,
+          "degrees": 0
+        },
+        "opacity": 1,
+        "fill": {
+          "kind": "linear",
+          "from": { "x": 0, "y": 0 },
+          "to": { "x": 260, "y": 0 },
+          "interpolation": "linear-rgb",
+          "stops": [
+            { "position": 0.0, "color": "#3B82F6", "alpha": 1.0 },
+            { "position": 0.35, "color": "#8B5CF6", "alpha": 0.85 },
+            { "position": 0.35, "color": "#EC4899", "alpha": 0.85 },
+            { "position": 0.75, "color": "#F59E0B", "alpha": 0.35 },
+            { "position": 1.0, "color": "#000000", "alpha": 0.0 }
+          ]
+        }
+      }
+    ]
+  }
+}

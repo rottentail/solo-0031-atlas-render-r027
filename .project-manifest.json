@@ -16,7 +16,7 @@
     {
       "id": "paint",
       "path": "internal/paint",
-      "responsibility": "颜色解析与线性渐变采样"
+      "responsibility": "颜色解析与多停靠点线性渐变采样（含透明度与线性光插值）"
     },
     {
       "id": "scene",
@@ -208,6 +208,27 @@
         "通过存储或渲染结果观察已提交事实"
       ],
       "verification": "python3 scripts/walkthrough.py --workflow submit-render"
+    },
+    {
+      "id": "gradient-stops",
+      "name": "多停靠点渐变渲染与移植",
+      "entry": "PUT /v1/scenes/{id}",
+      "success": "多停靠点与每点透明度经冻结、渲染和交换包产生确定PNG，透明端无暗边",
+      "failure": "非法停靠点、插值模式或混用两端字段返回400，旧两端渐变保持原渲染",
+      "module_ids": [
+        "httpapi",
+        "service",
+        "scene",
+        "paint",
+        "raster",
+        "bundle",
+        "persist"
+      ],
+      "steps": [
+        "经公开HTTP入口完成领域转换",
+        "通过存储或渲染结果观察已提交事实"
+      ],
+      "verification": "python3 scripts/walkthrough.py --workflow gradient-stops"
     },
     {
       "id": "cancel-render",

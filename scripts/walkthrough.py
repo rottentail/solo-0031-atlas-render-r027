@@ -39,6 +39,77 @@ def tiny_png():
     return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 2, 2, 8, 6, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(b'\0' + bytes([240, 40, 80, 255] * 2) + b'\0' + bytes([40, 80, 240, 128] * 2))) + chunk(b'IEND', b'')
 
 
+def decode_png(data):
+    """Decode an 8-bit RGBA PNG into (width, height, rows of (r, g, b, a))."""
+    assert data[:8] == b'\x89PNG\r\n\x1a\n'
+    pos, width, height, bit, colour = 8, 0, 0, 0, 0
+    idat = b''
+    while pos < len(data):
+        (size,) = struct.unpack('>I', data[pos:pos + 4])
+        kind = data[pos + 4:pos + 8]
+        body = data[pos + 8:pos + 8 + size]
+        if kind == b'IHDR':
+            width, height, bit, colour, _, _, _ = struct.unpack('>IIBBBBB', body)
+        elif kind == b'IDAT':
+            idat += body
+        pos += 12 + size
+    assert bit == 8 and colour in (2, 6)
+    channels = 4 if colour == 6 else 3
+    raw = zlib.decompress(idat)
+    stride = width * channels
+    rows, prev, offset = [], bytearray(stride), 0
+    for _ in range(height):
+        filt = raw[offset]
+        line = bytearray(raw[offset + 1:offset + 1 + stride])
+        offset += 1 + stride
+        for i in range(stride):
+            left = line[i - channels] if i >= channels else 0
+            up = prev[i]
+            up_left = prev[i - channels] if i >= channels else 0
+            if filt == 1:
+                line[i] = (line[i] + left) & 255
+            elif filt == 2:
+                line[i] = (line[i] + up) & 255
+            elif filt == 3:
+                line[i] = (line[i] + ((left + up) // 2)) & 255
+            elif filt == 4:
+                p = left + up - up_left
+                pa, pb, pc = abs(p - left), abs(p - up), abs(p - up_left)
+                guess = left if pa <= pb and pa <= pc else up if pb <= pc else up_left
+                line[i] = (line[i] + guess) & 255
+        expanded = None
+        if channels == 3:
+            expanded = bytearray(width * 4)
+            for i in range(width):
+                expanded[i * 4:i * 4 + 3] = line[i * 3:i * 3 + 3]
+                expanded[i * 4 + 3] = 255
+        rows.append([tuple((expanded if expanded is not None else line)[i:i + 4]) for i in range(0, width * 4, 4)])
+        # Keep the previous scanline in the encoded channel layout so filter
+        # references use the correct byte stride on the next row.
+        prev = line
+    return width, height, rows
+
+
+def gradient_stops_doc():
+    # Rectangle fades from opaque red to a fully transparent (arbitrarily black)
+    # stop over a black base layer; premultiplied interpolation must keep the
+    # visible color red instead of dragging the unseen black into a dark fringe.
+    black_base = {"id": "solid-tail", "kind": "rectangle", "width": 100, "height": 20,
+                  "transform": {"x": 10, "y": 10, "scaleX": 1, "scaleY": 1, "degrees": 0},
+                  "opacity": 1, "fill": {"kind": "solid", "color": "#000000"}}
+    fade = {"id": "fade", "kind": "rectangle", "width": 100, "height": 20,
+            "transform": {"x": 10, "y": 10, "scaleX": 1, "scaleY": 1, "degrees": 0},
+            "opacity": 1,
+            "fill": {"kind": "linear", "from": {"x": 0, "y": 0}, "to": {"x": 100, "y": 0},
+                     "interpolation": "linear-rgb",
+                     "stops": [
+                         {"position": 0, "color": "#FF0000", "alpha": 1},
+                         {"position": 0.5, "color": "#FF8800", "alpha": 0.6},
+                         {"position": 0.5, "color": "#00AAFF", "alpha": 0.6},
+                         {"position": 1, "color": "#000000", "alpha": 0}]}}
+    return {"width": 120, "height": 40, "background": "#F5F1E8", "layers": [black_base, fade]}
+
+
 class Demo:
     def __init__(self, binary, directory):
         self.binary = binary
@@ -102,7 +173,83 @@ class Demo:
         return self.call('POST', '/v1/jobs', {'snapshotId': snapshot['id'], 'scale': scale}, 202, {'Idempotency-Key': key})
 
 
+def run_gradient_stops(demo, out):
+    doc = gradient_stops_doc()
+    saved = demo.call('PUT', '/v1/scenes/gradient', {'name': '多停靠淡出', 'expectedRevision': 0, 'document': doc})
+    fill = saved['document']['layers'][1]['fill']
+    assert fill['stops'] == doc['layers'][1]['fill']['stops']
+    assert fill['interpolation'] == 'linear-rgb'
+
+    def reject(change, label):
+        bad = json.loads(json.dumps(doc))
+        change(bad)
+        demo.call('PUT', '/v1/scenes/' + label, {'name': label, 'expectedRevision': 0, 'document': bad}, 400)
+
+    g = lambda b: b['layers'][1]['fill']
+    reject(lambda b: g(b).__setitem__('stops', g(b)['stops'][:1]), 'one-stop')
+    reject(lambda b: g(b)['stops'].__setitem__(0, {**g(b)['stops'][0], 'position': 1.5}), 'bad-position')
+    reject(lambda b: g(b)['stops'].__setitem__(0, {**g(b)['stops'][0], 'alpha': -0.1}), 'bad-alpha')
+    reject(lambda b: g(b)['stops'].__setitem__(0, {**g(b)['stops'][0], 'color': 'red'}), 'bad-color')
+    reject(lambda b: g(b).__setitem__('interpolation', 'hsv'), 'bad-interpolation')
+    reject(lambda b: g(b).__setitem__('endColor', '#000000'), 'stops-with-endcolor')
+    reject(lambda b: b['layers'][0]['fill'].__setitem__('stops', [{'position': 0, 'color': '#FF0000', 'alpha': 1}, {'position': 1, 'color': '#00FF00', 'alpha': 1}]), 'solid-with-stops')
+    # Unknown fields remain rejected on the new nested structure.
+    reject(lambda b: g(b)['stops'][0].__setitem__('glow', 1), 'unknown-stop-field')
+
+    snapshot = demo.call('POST', '/v1/scenes/gradient/snapshots', {'expectedRevision': 1}, 201)
+    job = demo.wait(demo.submit(snapshot, 'gradient-render')['id'])
+    png = demo.call('GET', '/v1/artifacts/' + job['artifactId'])
+    width, height, rows = decode_png(png)
+    assert (width, height) == (120, 40)
+    mid = rows[20]
+    # Before the 0.5 boundary the fade runs red -> orange. The invisible black
+    # of the transparent endpoint must never darken this half: red stays the
+    # dominant channel all the way to the boundary.
+    for x in range(11, 59):
+        r, g, b, a = mid[x]
+        assert r >= g and r >= b, f'x={x}: unseen color darkened the fade: {(r, g, b, a)}'
+    # Co-located stops at local position 0.5 (world x=60) create a hard,
+    # explainable boundary: orange on the left, blue on the right.
+    left_rgb = mid[59][:3]
+    right_rgb = mid[60][:3]
+    assert left_rgb[0] > left_rgb[2] and right_rgb[2] > right_rgb[0] and left_rgb != right_rgb, (left_rgb, right_rgb)
+    # Fully transparent endpoint exposes the black base layer beneath.
+    assert sum(mid[109][:3]) <= 12 and mid[109][3] == 255
+    # Outside the rectangle the untouched cream background remains.
+    assert mid[115][:3] == (245, 241, 232)
+
+    # A frozen package rendered through the import path must reproduce the
+    # exact same transition in another instance/state store.
+    package = demo.call('GET', '/v1/snapshots/' + snapshot['id'] + '/package')
+    restored = demo.call('POST', '/v1/imports/gradient-copy', {'name': '迁移的淡出', 'package': package}, 201)
+    assert restored['document'] == snapshot['document']
+    snap2 = demo.call('POST', '/v1/scenes/gradient-copy/snapshots', {'expectedRevision': 1}, 201)
+    job2 = demo.wait(demo.submit(snap2, 'gradient-render-copy')['id'])
+    png2 = demo.call('GET', '/v1/artifacts/' + job2['artifactId'])
+    assert hashlib.sha256(png).hexdigest() == hashlib.sha256(png2).hexdigest()
+
+    # Legacy two-stop gradient documents stay valid and keep their old shape.
+    legacy = sample()
+    legacy_scene = demo.call('PUT', '/v1/scenes/emblem', {'name': '双色印记', 'expectedRevision': 0, 'document': legacy})
+    legacy_fill = legacy_scene['document']['layers'][0]['fill']
+    assert 'stops' not in legacy_fill and legacy_fill['endColor'] == '#32A5A0'
+    legacy_snap = demo.call('POST', '/v1/scenes/emblem/snapshots', {'expectedRevision': legacy_scene['revision']}, 201)
+    legacy_job = demo.wait(demo.submit(legacy_snap, 'gradient-legacy')['id'])
+    legacy_png = demo.call('GET', '/v1/artifacts/' + legacy_job['artifactId'])
+    assert legacy_png[:8] == b'\x89PNG\r\n\x1a\n'
+
+    if out:
+        Path(out).mkdir(parents=True, exist_ok=True)
+        (Path(out) / 'atlas-gradient-stops.png').write_bytes(png)
+        (Path(out) / 'atlas-gradient-legacy.png').write_bytes(legacy_png)
+    return {'workflow': 'gradient-stops', 'pngDigest': hashlib.sha256(png).hexdigest(),
+            'portableDigest': hashlib.sha256(png2).hexdigest(),
+            'legacyPngDigest': hashlib.sha256(legacy_png).hexdigest()}
+
+
 def run(demo, workflow, out):
+    if workflow == 'gradient-stops':
+        return run_gradient_stops(demo, out)
     d = sample()
     put = lambda doc, rev=0: demo.call('PUT', '/v1/scenes/emblem', {'name': '双色印记', 'expectedRevision': rev, 'document': doc})
     scene = put(d)

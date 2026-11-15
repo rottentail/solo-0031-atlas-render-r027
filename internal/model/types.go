@@ -27,12 +27,19 @@ type Transform struct {
 	ScaleY  float64 `json:"scaleY"`
 	Degrees float64 `json:"degrees"`
 }
+type GradientStop struct {
+	Position float64 `json:"position"`
+	Color    string  `json:"color"`
+	Alpha    float64 `json:"alpha"`
+}
 type Paint struct {
-	Kind     string `json:"kind"`
-	Color    string `json:"color"`
-	EndColor string `json:"endColor,omitempty"`
-	From     Point  `json:"from"`
-	To       Point  `json:"to"`
+	Kind          string         `json:"kind"`
+	Color         string         `json:"color"`
+	EndColor      string         `json:"endColor,omitempty"`
+	From          Point          `json:"from"`
+	To            Point          `json:"to"`
+	Stops         []GradientStop `json:"stops,omitempty"`
+	Interpolation string         `json:"interpolation,omitempty"`
 }
 type Layer struct {
 	ID        string    `json:"id"`

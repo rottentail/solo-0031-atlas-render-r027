@@ -4,6 +4,7 @@ import (
 	"atlas-render/internal/codec"
 	"atlas-render/internal/geometry"
 	"atlas-render/internal/model"
+	"atlas-render/internal/paint"
 	"atlas-render/internal/scene"
 	"image"
 	"math"
@@ -20,6 +21,7 @@ type operation struct {
 	opacity float64
 	bounds  image.Rectangle
 	bitmap  image.Image
+	paint   paint.Sampler
 }
 type Plan struct {
 	Width, Height, Scale int
@@ -86,6 +88,12 @@ func Compile(s model.Snapshot, scale int) (Plan, error) {
 					decoded[l.AssetID] = img
 				}
 				op.bitmap = img
+			} else {
+				sampler, e := paint.Compile(l.Fill)
+				if e != nil {
+					return model.Invalid("layer %s: %v", l.ID, e)
+				}
+				op.paint = sampler
 			}
 			p.Cost += int64(b.Dx()) * int64(b.Dy())
 			if p.Cost > 40_000_000 {

@@ -56,7 +56,7 @@ func (p Plan) Render(ctx context.Context) (*image.NRGBA, error) {
 					sy := b.Min.Y + int(local.Y/l.Height*float64(b.Dy()))
 					c = color.NRGBAModel.Convert(op.bitmap.At(sx, sy)).(color.NRGBA)
 				} else {
-					c = paint.Sample(l.Fill, local)
+					c = op.paint.SampleAt(local)
 				}
 				c.A = uint8(math.Round(float64(c.A) * op.opacity))
 				blend(img, x, y, c)
